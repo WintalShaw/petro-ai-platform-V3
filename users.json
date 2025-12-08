@@ -1,0 +1,64 @@
+{
+    "mr.gong": {
+        "password": "123456",
+        "role": "admin",
+        "model_path": "/root/admin/",
+        "model_states": {},
+        "history": []
+    },
+    "user": {
+        "password": "123",
+        "role": "user",
+        "model_path": "/usr/local/user/",
+        "model_states": {},
+        "history": []
+    },
+    "upc01": {
+        "password": "123456",
+        "role": "user",
+        "model_path": "/usr/local/ai_models/upc01/",
+        "model_states": {
+            "model_trend": "private"
+        },
+        "history": [
+            {
+                "id": "1765098734",
+                "title": "📅 2025-12-07 17:12 | 产量预测",
+                "file_path": "",
+                "updated_at": "2025-12-07 17:12"
+            },
+            {
+                "id": "1765097354",
+                "title": "📅 2025-12-07 16:49 | 产量预测",
+                "file_path": "",
+                "updated_at": "2025-12-07 16:49"
+            },
+            {
+                "id": "1765090557",
+                "title": "📅 2025-12-07 14:55 | 产量预测",
+                "file_path": "",
+                "updated_at": "2025-12-07 14:55"
+            },
+            {
+                "id": "1765088617",
+                "title": "📅 2025-12-07 14:23 | 产量预测",
+                "file_path": "",
+                "updated_at": "2025-12-07 14:23"
+            }
+        ]
+    },
+    "upc03": {
+        "password": "123456",
+        "role": "user",
+        "model_path": "/usr/local/ai_models/upc03/",
+        "model_states": {},
+        "history": [
+            {
+                "id": "1765089357",
+                "title": "📅 2025-12-07 14:35 | 产量预测",
+                "file_path": "",
+                "updated_at": "2025-12-07 14:35"
+            }
+        ]
+    }
+}
