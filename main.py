@@ -228,7 +228,7 @@ def init_session():
 def render_login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        st.image("https://img.icons8.com/fluency/96/oil-pump.png", width=80)
+        st.image("system-logo.png", width=80)
         st.title("AI 油气生产指挥系统")
         st.caption("Enterprise Edition V3.2")
 
@@ -1088,4 +1088,5 @@ if __name__ == "__main__":
             if st.session_state.current_page == "analysis":
                 render_analysis_page()
             elif st.session_state.current_page == "training":
+
                 render_training_page()
