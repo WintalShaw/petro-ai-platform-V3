@@ -5,9 +5,20 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei', 'Arial Unicode MS']
-plt.rcParams['axes.unicode_minus'] = False
+def get_chinese_font():
+    """
+    终极方案：直接加载项目根目录下的字体文件
+    """
+    # 【核心修改】这里改成了你的文件名
+    font_path = "msyh.ttc" 
+    
+    # 如果根目录找不到，回退到系统字体（防止本地运行报错）
+    if not os.path.exists(font_path):
+        # 如果本地也没有这个文件，就尝试系统自带的
+        return font_manager.FontProperties(family='Microsoft YaHei')
+    
+    # 加载指定的字体文件
+    return font_manager.FontProperties(fname=font_path)
 
 
 def run(context):
@@ -94,4 +105,5 @@ def view(context):
     if len(labels) >= 2:
         f1, f2 = random.sample(labels, 2)
         r_val = random.uniform(0.75, 0.95)
+
         st.caption(f"✅ 深度归因结论: **{f1}** 对 **{f2}** 具有显著的正向敏感度 (Shapley Value={r_val:.2f})")
