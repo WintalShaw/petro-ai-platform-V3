@@ -712,7 +712,10 @@ def render_training_page():
 
 def render_deep_model_logic(tool_name, tool_meta_name, context):
     """
-    处理模型的训练、微调、私有化逻辑 (V2 增强版 + 数据上传功能)
+    处理模型的训练、微调、私有化逻辑 (V4 最终完整版)
+    核心机制：
+    1. 只有当模型需要训练/微调且未完成时，返回 False (阻塞图表)。
+    2. 当训练/微调完成后，返回 True (允许显示图表)，但通过不设置 ready_next 来暂停流程，等待用户点击按钮。
     """
     users = load_data(USER_DB_FILE)
     username = st.session_state.username
@@ -726,6 +729,7 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
     db_key = tool_map.get(tool_name, tool_name)
     current_status = user_models.get(db_key, "untrained")
 
+    # 如果流程已结束（回看历史），直接放行渲染
     if st.session_state.get("workflow_finished"):
         return True
 
@@ -745,17 +749,16 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
         # 场景 A: 公共库工具 (首次训练)
         # =================================================
         if current_status == "untrained":
+            # 1. 还没训练 -> 显示训练配置 -> 阻塞图表
             if not st.session_state.get(f"trained_{tool_name}"):
                 st.info("检测到您是首次使用该模型，需要初始化训练参数。")
 
-                # [新增功能 2.1] 训练数据上传演示
                 st.markdown("##### Step 1: 导入训练数据集")
                 uploaded_train = st.file_uploader("请上传历史生产数据 (CSV/Parquet)",
                                                   type=["csv", "parquet"],
                                                   key=f"up_train_{tool_name}")
 
                 st.markdown("##### Step 2: 执行训练")
-                # 只有上传了文件（或者演示时直接允许）才显示按钮，为了流畅我们不强制要求非得上传
                 btn_label = "⚡ 开始全量数据训练" if uploaded_train else "⚡ 使用默认样本集开始训练"
 
                 if st.button(btn_label, key=f"btn_train_{tool_name}", use_container_width=True):
@@ -769,27 +772,40 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                                         text=f"Training Epoch {percent // 20}/5 | Loss: {random.uniform(0.1, 0.5):.4f}")
                     my_bar.empty()
 
+                    # 标记训练完成，刷新页面
                     st.session_state[f"trained_{tool_name}"] = True
                     st.rerun()
 
+                # 没训练完，不给看图，阻塞
+                return False
+
             else:
+                # 2. 训练已完成 -> 显示决策按钮 -> 【允许看图】
                 st.success(f"✅ 训练完成 | 准确率: {random.uniform(94.0, 98.0):.1f}%")
 
-                st.markdown("**🔐 专属库管理**")
-                st.write("是否将该模型权重保存至您的个人空间？")
-                col_a, col_b = st.columns(2)
-                if col_a.button("✅ 加入专属库", key=f"btn_yes_{tool_name}", use_container_width=True):
-                    users[username]["model_states"][db_key] = "private"
-                    save_data(USER_DB_FILE, users)
-                    st.toast("模型已保存至专属空间")
-                    st.session_state[f"{tool_name}_ready_next"] = True
-                    st.rerun()
+                with st.container():
+                    st.markdown("##### 🕵️ 结果评估与决策")
+                    st.caption("下图为基于新训练权重的预测结果，请评估是否达标：")
 
-                if col_b.button("🚫 仅本次使用", key=f"btn_no_{tool_name}", use_container_width=True):
-                    st.toast("使用临时模型继续")
-                    st.session_state[f"{tool_name}_ready_next"] = True
-                    st.rerun()
+                    col_a, col_b = st.columns(2)
 
+                    # 只有点击了这里，流程才继续
+                    if col_a.button("💾 效果不错，存入专属库", key=f"btn_yes_{tool_name}", type="primary",
+                                    use_container_width=True):
+                        users[username]["model_states"][db_key] = "private"
+                        save_data(USER_DB_FILE, users)
+                        st.toast("模型已保存至专属空间")
+                        st.session_state[f"{tool_name}_ready_next"] = True
+                        time.sleep(0.5)
+                        st.rerun()
+
+                    if col_b.button("➡️ 仅本次使用，继续", key=f"btn_no_{tool_name}", use_container_width=True):
+                        st.toast("使用临时模型继续")
+                        st.session_state[f"{tool_name}_ready_next"] = True
+                        time.sleep(0.5)
+                        st.rerun()
+
+                # 【关键】返回 True，让工具脚本把图画出来给用户看
                 return True
 
         # =================================================
@@ -798,41 +814,40 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
         elif current_status == "private":
             mode_key = f"{tool_name}_mode"
 
+            # 1. 还没选模式 -> 阻塞
             if mode_key not in st.session_state:
                 st.info("检测到您的专属模型。请选择运行模式：")
                 b1, b2 = st.columns(2)
                 if b1.button("🔄 要增量微调", key=f"ft_yes_{tool_name}", use_container_width=True):
                     st.session_state[mode_key] = "finetuning"
                     st.rerun()
-                if b2.button("⏩ 不要增量微调", key=f"ft_no_{tool_name}", use_container_width=True):
+                if b2.button("⏩ 不要增量微调 (直接使用)", key=f"ft_no_{tool_name}", use_container_width=True):
                     st.session_state[mode_key] = "direct"
                     st.rerun()
+                return False
 
+            # 2. 直接使用 -> 推理 -> 放行
             elif st.session_state[mode_key] == "direct":
                 if not st.session_state.get(f"{tool_name}_simulated"):
                     with st.spinner("正在加载专属权重并执行推理..."):
                         time.sleep(1.5)
                     st.session_state[f"{tool_name}_simulated"] = True
-                st.success("✅ 推理完成 (直接使用历史权重)")
+
                 st.session_state[f"{tool_name}_ready_next"] = True
                 return True
 
+            # 3. 微调模式
             elif st.session_state[mode_key] == "finetuning":
-                # [新增功能 2.2] 微调数据上传与确认流程
-                # 只有当还没微调完成时，显示上传和开始按钮
+                # A. 还没微调完 -> 阻塞
                 if not st.session_state.get(f"{tool_name}_ft_done"):
-
                     st.markdown("##### 📤 上传增量校准数据")
                     ft_file = st.file_uploader("拖拽新数据到此处...", type=["csv"], key=f"ft_up_{tool_name}")
 
-                    # 确认微调按钮
                     start_ft = st.button("🚀 启动增量训练 (Fine-tuning)", key=f"start_ft_{tool_name}", type="primary")
 
                     if start_ft:
                         if ft_file:
                             st.toast(f"收到增量数据: {ft_file.name}")
-
-                        # 开始跑进度条
                         prog_bar = st.progress(0, text="启动增量训练...")
                         for i in range(100):
                             time.sleep(0.03)
@@ -842,30 +857,36 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                         st.session_state[f"{tool_name}_ft_done"] = True
                         st.rerun()
 
+                    # 还没微调完，不给看图
+                    return False
+
                 else:
-                    # 微调完成后显示的内容
+                    # B. 微调已完成 -> 显示决策按钮 -> 【允许看图】
                     st.success(f"✅ 微调完成 | 新增样本: 128 | 准确率提升: +{random.uniform(0.5, 1.2):.2f}%")
-                    st.markdown("---")
-                    st.write("**模型库操作:**")
-                    btn1, btn2 = st.columns(2)
 
-                    if btn1.button("💾 保存训练后的模型", key=f"save_ft_{tool_name}", type="primary",
-                                   use_container_width=True):
-                        st.toast(f"✅ 模型 {db_key} 版本已更新至 V{random.randint(4, 9)}.0")
-                        time.sleep(1)
-                        st.session_state[f"{tool_name}_ready_next"] = True
-                        st.rerun()
+                    with st.container():
+                        st.markdown("##### 🕵️ 微调效果评估")
+                        st.caption("下图是微调后的预测表现，请决定是否更新模型版本：")
 
-                    if btn2.button("🗑️ 移除该模型", key=f"del_ft_{tool_name}", use_container_width=True):
-                        if db_key in users[username]["model_states"]:
-                            del users[username]["model_states"][db_key]
-                            save_data(USER_DB_FILE, users)
-                        st.session_state.pop(f"trained_{tool_name}", None)
-                        st.toast("⚠️ 模型已移除，下次使用将重新初始化")
-                        time.sleep(1)
-                        st.session_state[f"{tool_name}_ready_next"] = True
-                        st.rerun()
+                        btn1, btn2 = st.columns(2)
 
+                        # 只有点击按钮，才放行下一步
+                        if btn1.button("💾 保存并更新版本", key=f"save_ft_{tool_name}", type="primary",
+                                       use_container_width=True):
+                            st.toast(f"✅ 模型 {db_key} 版本已更新至 V{random.randint(4, 9)}.0")
+                            st.session_state[f"{tool_name}_ready_next"] = True
+                            time.sleep(1)
+                            st.rerun()
+
+                        if btn2.button("➡️ 效果一般，不保存", key=f"del_ft_{tool_name}", use_container_width=True):
+                            st.toast("⚠️ 放弃微调参数，使用旧参数继续")
+                            st.session_state[f"{tool_name}_ready_next"] = True
+                            time.sleep(1)
+                            st.rerun()
+
+                    # 【核心】这里返回 True！
+                    # 这意味着工具代码会继续执行，把预测图画在这些按钮的下方。
+                    # 用户可以先看下面的图，再决定点上面的“保存”还是“不保存”。
                     return True
 
     return False
@@ -889,11 +910,28 @@ def render_analysis_page():
     # 3. 聊天输入框
     if prompt := st.chat_input("请输入指令..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-        # 重置工作流状态
+
+        # --- 【关键修复】 彻底重置状态 ---
+        # 确保新任务开始时，不会残留上一个任务的“已完成”标记
         st.session_state.workflow_step = 0
         st.session_state.workflow_finished = False
         st.session_state.current_workflow = None
         st.session_state.current_context = None
+
+        # 清除所有工具相关的临时 flag，防止“抢跑”
+        keys_to_clear = [
+            k for k in st.session_state.keys()
+            if k.endswith("_ready_next")
+               or k.endswith("_ft_done")
+               or k.endswith("_mode")
+               or k.endswith("_simulated")
+               or k.startswith("trained_")
+               or k.endswith("_run_completed")
+        ]
+        for k in keys_to_clear:
+            del st.session_state[k]
+        # -------------------------------
+
         st.rerun()
 
     # 4. 核心：任务执行大框
@@ -904,12 +942,8 @@ def render_analysis_page():
         last_msg = st.session_state.messages[-1]
         if not st.session_state.get("current_workflow") and last_msg["role"] == "user":
             with st.chat_message("assistant"):
-
-                # ================= [新增功能] AI 思考过程模拟 =================
-                # 使用一个空的占位符来实现动态文字更新效果
+                # AI 思考过程模拟
                 thinking_box = st.empty()
-
-                # 定义思考步骤（模拟 Chain of Thought）
                 thoughts = [
                     "🤔 正在解析自然语言指令...",
                     "🔍 检索知识库: 关联历史生产数据与地质特征...",
@@ -918,18 +952,13 @@ def render_analysis_page():
                     "🛠️ 正在编排 Agent 工具链 (CoT)...",
                     "✨ 方案生成完毕，准备执行。"
                 ]
-
-                # 循环播放思考过程
                 for thought in thoughts:
-                    # 使用斜体+灰色字模拟内心独白
                     thinking_box.markdown(f"_{thought}_")
-                    time.sleep(random.uniform(0.5, 1.2))  # 随机延迟，更像真的
-
-                # 思考完后清空占位符，或者保留最后一句话
+                    time.sleep(random.uniform(0.3, 0.8))
                 thinking_box.empty()
-                # ========================================================
 
                 wf, ctx = plan_workflow(last_msg["content"])
+                # 注入模型控制函数
                 ctx['render_model_ui'] = render_deep_model_logic
                 st.session_state.current_workflow = wf
                 st.session_state.current_context = ctx
@@ -944,8 +973,6 @@ def render_analysis_page():
             # ================= [新增功能 1] 工作流可视化 =================
             with st.chat_message("assistant"):
                 st.markdown(f"#### 🗺️ AI 任务执行路径规划")
-
-                # 创建 Graphviz 图表
                 graph = graphviz.Digraph()
                 graph.attr(rankdir='LR', size='10,4')
                 graph.attr('node', shape='box', style='filled,rounded',
@@ -953,30 +980,25 @@ def render_analysis_page():
 
                 for idx, tool_id in enumerate(workflow):
                     meta = TOOL_META.get(tool_id, {"name": tool_id})
-                    if idx < current_step:  # 已完成
-                        fill = '#c8e6c9'  # 绿色
-                        pen = '#4caf50'
-                    elif idx == current_step and not is_finished:  # 进行中
-                        fill = '#fff9c4'  # 黄色
-                        pen = '#fbc02d'
-                    else:  # 未开始
-                        fill = '#e3f2fd'  # 蓝色
-                        pen = '#2196f3'
+                    if idx < current_step:
+                        fill, pen = '#c8e6c9', '#4caf50'  # 绿
+                    elif idx == current_step and not is_finished:
+                        fill, pen = '#fff9c4', '#fbc02d'  # 黄
+                    else:
+                        fill, pen = '#e3f2fd', '#2196f3'  # 蓝
 
                     node_label = f"{idx + 1}. {meta['name']}"
                     graph.node(str(idx), node_label, fillcolor=fill, color=pen)
-
                     if idx > 0:
                         graph.edge(str(idx - 1), str(idx), color='#b0bec5')
 
                 st.graphviz_chart(graph, use_container_width=True)
                 st.divider()
 
-            # ==========================================================
-
             # --- 定义内部渲染函数 ---
             def render_tool_steps():
                 for i, tool_id in enumerate(workflow):
+                    # 如果还没完成整个流程，且当前遍历到的步骤 > 当前实际步骤，停止渲染后续
                     if not is_finished and i > current_step:
                         break
 
@@ -995,32 +1017,50 @@ def render_analysis_page():
                         try:
                             module = importlib.import_module(f"tools.{tool_id}")
 
+                            # 【优化】后台逻辑防抖：防止 UI 交互导致 run() 重复执行
+                            # 只有当前步骤激活，且之前没跑过 run，才执行
+                            step_run_key = f"step_{i}_run_completed"
+
                             if is_current_active:
-                                delay_bar = st.progress(0, text=f"⏳ {meta['name']} 正在执行...")
-                                for k in range(100):
-                                    time.sleep(0.02)
-                                    delay_bar.progress(k + 1)
-                                delay_bar.empty()
+                                if not st.session_state.get(step_run_key):
+                                    delay_bar = st.progress(0, text=f"⏳ {meta['name']} 正在执行...")
+                                    for k in range(100):
+                                        time.sleep(0.01)
+                                        delay_bar.progress(k + 1)
+                                    delay_bar.empty()
 
-                                module.run(context)
+                                    # 执行工具的后台逻辑
+                                    module.run(context)
+                                    # 标记该步 run 已跑完
+                                    st.session_state[step_run_key] = True
 
+                            # 渲染 UI 视图 (模型交互逻辑在这里触发)
                             if hasattr(module, 'view'):
                                 module.view(context)
 
+                            # 流程控制：决定何时跳到下一步
                             if is_current_active:
                                 deep_models = ["tool_trend_algo", "tool_risk_algo", "tool_water_algo"]
+
+                                # A. 如果是深度模型
                                 if tool_id in deep_models:
+                                    # 【关键修复】只有当 ready_next 标志位被逻辑函数置为 True 时，才跳转
                                     if st.session_state.get(f"{tool_id}_ready_next"):
-                                        time.sleep(1.0)
+                                        time.sleep(0.5)
                                         st.session_state.workflow_step += 1
                                         st.rerun()
+                                    # 否则这里什么都不做，静静等待用户操作
+
+                                # B. 如果是数据加载 (Data Loader)
                                 elif tool_id == "tool_data_loader":
                                     st.write("---")
                                     if st.button("⬇️ 数据确认无误，执行下一步", key=f"next_step_{i}", type="primary"):
                                         st.session_state.workflow_step += 1
                                         st.rerun()
+
+                                # C. 普通工具 (Cleaner, Feature, etc.)
                                 else:
-                                    time.sleep(0.8)
+                                    time.sleep(0.8)  # 简单展示后自动跳转
                                     st.session_state.workflow_step += 1
                                     st.rerun()
 
@@ -1056,21 +1096,6 @@ def render_analysis_page():
             })
             st.rerun()
 
-    # 5. 任务完成后生成最终总结
-    if st.session_state.get("workflow_finished", False):
-        last_msg = st.session_state.messages[-1]
-        if last_msg["role"] == "user" or (last_msg["role"] == "assistant" and "核心结论" not in last_msg["content"]):
-            ctx = st.session_state.current_context
-            summary = ctx.get('trend_summary') or ctx.get('risk_summary') or ctx.get('water_summary') or "分析完成。"
-            final_resp = f"**{ctx.get('task_name')}** 执行完成。\n\n📊 **核心结论**: {summary}\n\n详细过程请查看上方折叠面板。"
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": final_resp,
-                "is_tool_process": False
-            })
-            st.rerun()
-
 
 if __name__ == "__main__":
     init_db()  # 初始化文件
@@ -1088,5 +1113,4 @@ if __name__ == "__main__":
             if st.session_state.current_page == "analysis":
                 render_analysis_page()
             elif st.session_state.current_page == "training":
-
                 render_training_page()
