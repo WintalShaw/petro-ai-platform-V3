@@ -712,10 +712,11 @@ def render_training_page():
 
 def render_deep_model_logic(tool_name, tool_meta_name, context):
     """
-    处理模型的训练、微调、私有化逻辑 (V4 最终完整版)
-    核心机制：
-    1. 只有当模型需要训练/微调且未完成时，返回 False (阻塞图表)。
-    2. 当训练/微调完成后，返回 True (允许显示图表)，但通过不设置 ready_next 来暂停流程，等待用户点击按钮。
+    处理模型的训练、微调、私有化逻辑 (V5 - 移除逻辑修正版)
+    核心逻辑：
+    1. 训练/微调未完成 -> 返回 False (阻塞图表)。
+    2. 训练/微调完成 -> 返回 True (显示图表)，但流程暂停等待按钮。
+    3. 微调后若选择移除 -> 删库、清状态，下次需重练。
     """
     users = load_data(USER_DB_FILE)
     username = st.session_state.username
@@ -749,7 +750,7 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
         # 场景 A: 公共库工具 (首次训练)
         # =================================================
         if current_status == "untrained":
-            # 1. 还没训练 -> 显示训练配置 -> 阻塞图表
+            # 1. 还没训练 -> 阻塞
             if not st.session_state.get(f"trained_{tool_name}"):
                 st.info("检测到您是首次使用该模型，需要初始化训练参数。")
 
@@ -772,26 +773,22 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                                         text=f"Training Epoch {percent // 20}/5 | Loss: {random.uniform(0.1, 0.5):.4f}")
                     my_bar.empty()
 
-                    # 标记训练完成，刷新页面
                     st.session_state[f"trained_{tool_name}"] = True
                     st.rerun()
-
-                # 没训练完，不给看图，阻塞
+                
                 return False
 
             else:
-                # 2. 训练已完成 -> 显示决策按钮 -> 【允许看图】
+                # 2. 训练已完成 -> 允许看图 -> 等待决策
                 st.success(f"✅ 训练完成 | 准确率: {random.uniform(94.0, 98.0):.1f}%")
-
+                
                 with st.container():
                     st.markdown("##### 🕵️ 结果评估与决策")
                     st.caption("下图为基于新训练权重的预测结果，请评估是否达标：")
-
+                    
                     col_a, col_b = st.columns(2)
-
-                    # 只有点击了这里，流程才继续
-                    if col_a.button("💾 效果不错，存入专属库", key=f"btn_yes_{tool_name}", type="primary",
-                                    use_container_width=True):
+                    
+                    if col_a.button("💾 效果不错，存入专属库", key=f"btn_yes_{tool_name}", type="primary", use_container_width=True):
                         users[username]["model_states"][db_key] = "private"
                         save_data(USER_DB_FILE, users)
                         st.toast("模型已保存至专属空间")
@@ -805,7 +802,6 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                         time.sleep(0.5)
                         st.rerun()
 
-                # 【关键】返回 True，让工具脚本把图画出来给用户看
                 return True
 
         # =================================================
@@ -814,7 +810,7 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
         elif current_status == "private":
             mode_key = f"{tool_name}_mode"
 
-            # 1. 还没选模式 -> 阻塞
+            # 1. 选模式 -> 阻塞
             if mode_key not in st.session_state:
                 st.info("检测到您的专属模型。请选择运行模式：")
                 b1, b2 = st.columns(2)
@@ -832,17 +828,17 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                     with st.spinner("正在加载专属权重并执行推理..."):
                         time.sleep(1.5)
                     st.session_state[f"{tool_name}_simulated"] = True
-
+                
                 st.session_state[f"{tool_name}_ready_next"] = True
                 return True
 
             # 3. 微调模式
             elif st.session_state[mode_key] == "finetuning":
-                # A. 还没微调完 -> 阻塞
+                # A. 微调未完成 -> 阻塞
                 if not st.session_state.get(f"{tool_name}_ft_done"):
                     st.markdown("##### 📤 上传增量校准数据")
                     ft_file = st.file_uploader("拖拽新数据到此处...", type=["csv"], key=f"ft_up_{tool_name}")
-
+                    
                     start_ft = st.button("🚀 启动增量训练 (Fine-tuning)", key=f"start_ft_{tool_name}", type="primary")
 
                     if start_ft:
@@ -853,24 +849,23 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                             time.sleep(0.03)
                             prog_bar.progress(i + 1, text=f"Fine-tuning... | Loss: {random.uniform(0.01, 0.1):.4f}")
                         prog_bar.empty()
-
+                        
                         st.session_state[f"{tool_name}_ft_done"] = True
                         st.rerun()
-
-                    # 还没微调完，不给看图
+                    
                     return False
 
                 else:
-                    # B. 微调已完成 -> 显示决策按钮 -> 【允许看图】
+                    # B. 微调完成 -> 允许看图 -> 等待决策
                     st.success(f"✅ 微调完成 | 新增样本: 128 | 准确率提升: +{random.uniform(0.5, 1.2):.2f}%")
-
+                    
                     with st.container():
                         st.markdown("##### 🕵️ 微调效果评估")
                         st.caption("下图是微调后的预测表现，请决定是否更新模型版本：")
-
+                        
                         btn1, btn2 = st.columns(2)
 
-                        # 只有点击按钮，才放行下一步
+                        # 按钮 1: 保存
                         if btn1.button("💾 保存并更新版本", key=f"save_ft_{tool_name}", type="primary",
                                        use_container_width=True):
                             st.toast(f"✅ 模型 {db_key} 版本已更新至 V{random.randint(4, 9)}.0")
@@ -878,15 +873,24 @@ def render_deep_model_logic(tool_name, tool_meta_name, context):
                             time.sleep(1)
                             st.rerun()
 
-                        if btn2.button("➡️ 效果一般，不保存", key=f"del_ft_{tool_name}", use_container_width=True):
-                            st.toast("⚠️ 放弃微调参数，使用旧参数继续")
+                        # 按钮 2: 效果不好，直接移除 (重置状态)
+                        if btn2.button("🗑️ 效果不佳，直接移除", key=f"del_ft_{tool_name}", use_container_width=True):
+                            # --- 核心修改逻辑 ---
+                            # 1. 从数据库移除
+                            if db_key in users[username]["model_states"]:
+                                del users[username]["model_states"][db_key]
+                                save_data(USER_DB_FILE, users)
+                            
+                            # 2. 清除训练状态缓存
+                            st.session_state.pop(f"trained_{tool_name}", None)
+                            
+                            # 3. 提示并允许本次流程继续 (使用刚才算的临时结果)
+                            st.toast("⚠️ 模型已从专属库移除，下次使用需重新训练")
                             st.session_state[f"{tool_name}_ready_next"] = True
                             time.sleep(1)
                             st.rerun()
-
-                    # 【核心】这里返回 True！
-                    # 这意味着工具代码会继续执行，把预测图画在这些按钮的下方。
-                    # 用户可以先看下面的图，再决定点上面的“保存”还是“不保存”。
+                            
+                    # 返回 True，允许下方显示图表
                     return True
 
     return False
@@ -1114,3 +1118,4 @@ if __name__ == "__main__":
                 render_analysis_page()
             elif st.session_state.current_page == "training":
                 render_training_page()
+
